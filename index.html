@@ -1,32 +1,323 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>file.d documentation</title>
-  <link rel="icon" type="image/png" href="/file.d/static/file.d.png" />
-  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
-  <meta name="description" content="A blazing fast tool for building data pipelines: read, process, and output events.">
-  <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
-  <link rel="stylesheet" href="//unpkg.com/docsify/lib/themes/vue.css">
-</head>
-<body>
-  <div id="app"></div>
-  <script>
-    window.$docsify = {
-      name: 'file.d',
-      repo: 'https://github.com/ozontech/file.d',
-      loadSidebar: true,
-      loadNavbar: true,
-      subMaxLevel: 2,
-      maxLevel: 1,
-      coverpage: true,
-      auto2top: true,
-      markdown: {
-        gfm: true
+// FLAPPY BIRD STYLE GAME (FLUTTER + FLAME + POLISH FEATURES)
+
+// Step 1: Create new Flutter project
+// Command: flutter create flappy_game
+
+// Step 2: pubspec.yaml dependencies:
+dependencies:
+  flame: ^1.14.0
+  flutter:
+    sdk: flutter
+  audioplayers: ^5.2.0
+  shared_preferences: ^2.0.15
+
+flutter:
+  assets:
+    - assets/bird.png
+    - assets/coin.png
+    - assets/pipe.png
+    - assets/background.png
+    - assets/sounds/jump.wav
+    - assets/sounds/coin.wav
+    - assets/sounds/game_over.wav
+    - assets/sounds/bg_music.mp3
+
+// Step 3: Create bird.dart
+import 'package:flame/components.dart';
+import 'package:flame/sprite.dart';
+
+class Bird extends SpriteAnimationComponent {
+  Bird() : super(size: Vector2(50, 50));
+
+  @override
+  Future<void> onLoad() async {
+    final spriteSheet = await images.load('bird.png');
+    animation = SpriteAnimation.fromFrameData(
+      spriteSheet,
+      SpriteAnimationData.sequenced(
+        amount: 4,
+        stepTime: 0.1,
+        textureSize: Vector2(32, 32),
+      ),
+    );
+    position = Vector2(100, 300);
+  }
+}
+
+// Step 4: Create coin.dart
+import 'package:flame/components.dart';
+
+class Coin extends SpriteComponent {
+  Coin(Vector2 position)
+      : super(size: Vector2(30, 30), position: position);
+
+  @override
+  Future<void> onLoad() async {
+    sprite = await Sprite.load('coin.png');
+  }
+
+  @override
+  void update(double dt) {
+    position.x -= 100 * dt;
+    if (position.x < -width) removeFromParent();
+  }
+}
+
+// Step 5: Create pipe.dart
+import 'package:flame/components.dart';
+
+class Pipe extends SpriteComponent {
+  Pipe(Vector2 position, {bool isTop = false})
+      : super(size: Vector2(60, 200), position: position) {
+    angle = isTop ? 3.14 : 0;
+  }
+
+  @override
+  Future<void> onLoad() async {
+    sprite = await Sprite.load('pipe.png');
+  }
+
+  @override
+  void update(double dt) {
+    position.x -= 150 * dt;
+    if (position.x < -width) removeFromParent();
+  }
+}
+
+// Step 6: Create flappy_game.dart
+import 'package:flame/game.dart';
+import 'package:flutter/material.dart';
+import 'bird.dart';
+import 'coin.dart';
+import 'pipe.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class FlappyGame extends FlameGame {
+  late Bird player;
+  double timeSurvived = 0;
+  int coinsCollected = 0;
+  double pipeTimer = 0;
+  bool isGameOver = false;
+  final coinCount = ValueNotifier<int>(0);
+  final timeNotifier = ValueNotifier<double>(0);
+  final _audioPlayer = AudioPlayer();
+  final _bgPlayer = AudioPlayer();
+  int highScore = 0;
+  bool tutorialShown = false;
+
+  @override
+  Future<void> onLoad() async {
+    await _loadHighScore();
+    player = Bird();
+    add(player);
+    add(SpriteComponent(
+      sprite: await loadSprite('background.png'),
+      size: size,
+    ));
+    _bgPlayer.setReleaseMode(ReleaseMode.loop);
+    _bgPlayer.play(AssetSource('sounds/bg_music.mp3'));
+  }
+
+  @override
+  void update(double dt) {
+    super.update(dt);
+    if (isGameOver) return;
+
+    timeSurvived += dt;
+    timeNotifier.value = timeSurvived;
+
+    for (final coin in children.whereType<Coin>()) {
+      if (player.toRect().overlaps(coin.toRect())) {
+        coin.removeFromParent();
+        coinCount.value++;
+        _audioPlayer.play(AssetSource('sounds/coin.wav'));
       }
     }
-  </script>
-  <script src="//unpkg.com/docsify/lib/docsify.min.js"></script>
-  <script src="//unpkg.com/docsify-copy-code"></script>
-</body>
-</html>
+
+    for (final pipe in children.whereType<Pipe>()) {
+      if (player.toRect().overlaps(pipe.toRect())) {
+        _audioPlayer.play(AssetSource('sounds/game_over.wav'));
+        pauseEngine();
+        isGameOver = true;
+        _bgPlayer.stop();
+        _saveHighScore();
+      }
+    }
+
+    pipeTimer += dt;
+    if (pipeTimer > 2.5) {
+      pipeTimer = 0;
+      final gap = 120.0;
+      final baseY = size.y / 2;
+      add(Pipe(Vector2(size.x, baseY - gap - 200), isTop: true));
+      add(Pipe(Vector2(size.x, baseY + gap)));
+      add(Coin(Vector2(size.x + 50, baseY + 30)));
+    }
+  }
+
+  void moveUp() {
+    player.position.y -= 50;
+    _audioPlayer.play(AssetSource('sounds/jump.wav'));
+  }
+
+  void moveDown() {
+    player.position.y += 50;
+  }
+
+  Future<void> _saveHighScore() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (timeSurvived > highScore) {
+      highScore = timeSurvived.toInt();
+      await prefs.setInt('high_score', highScore);
+    }
+  }
+
+  Future<void> _loadHighScore() async {
+    final prefs = await SharedPreferences.getInstance();
+    highScore = prefs.getInt('high_score') ?? 0;
+  }
+}
+
+// Step 7: main.dart
+import 'package:flutter/material.dart';
+import 'package:flame/game.dart';
+import 'game/flappy_game.dart';
+import 'widgets/game_over.dart';
+import 'widgets/tutorial.dart';
+
+void main() {
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  late FlappyGame _game = FlappyGame();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Stack(
+          children: [
+            GameWidget(game: _game),
+            if (!_game.tutorialShown) TutorialOverlay(onDismiss: () => _game.tutorialShown = true),
+            Positioned(
+              bottom: 100,
+              right: 20,
+              child: Column(
+                children: [
+                  ElevatedButton(onPressed: _game.moveUp, child: Icon(Icons.arrow_upward)),
+                  SizedBox(height: 10),
+                  ElevatedButton(onPressed: _game.moveDown, child: Icon(Icons.arrow_downward)),
+                ],
+              ),
+            ),
+            Positioned(
+              top: 20,
+              left: 20,
+              child: ValueListenableBuilder<double>(
+                valueListenable: _game.timeNotifier,
+                builder: (_, time, __) => Text("Time: ${time.toStringAsFixed(1)}", style: TextStyle(fontSize: 20)),
+              ),
+            ),
+            Positioned(
+              top: 70,
+              left: 20,
+              child: ValueListenableBuilder<int>(
+                valueListenable: _game.coinCount,
+                builder: (_, coins, __) => Text("Coins: $coins", style: TextStyle(fontSize: 20)),
+              ),
+            ),
+            if (_game.isGameOver)
+              GameOverOverlay(
+                coins: _game.coinCount.value,
+                timeSurvived: _game.timeNotifier.value,
+                highScore: _game.highScore,
+                onRestart: () {
+                  _game = FlappyGame();
+                  runApp(MyApp());
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Step 8: game_over.dart
+import 'package:flutter/material.dart';
+
+class GameOverOverlay extends StatelessWidget {
+  final int coins;
+  final double timeSurvived;
+  final int highScore;
+  final VoidCallback onRestart;
+
+  const GameOverOverlay({
+    required this.coins,
+    required this.timeSurvived,
+    required this.highScore,
+    required this.onRestart,
+    Key? key,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Card(
+        color: Colors.white,
+        elevation: 12,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text("Game Over", style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
+              SizedBox(height: 16),
+              Text("Time: ${timeSurvived.toStringAsFixed(1)}s"),
+              Text("Coins: $coins"),
+              Text("High Score: $highScore"),
+              SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: onRestart,
+                child: Text("Restart"),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Step 9: tutorial.dart
+import 'package:flutter/material.dart';
+
+class TutorialOverlay extends StatelessWidget {
+  final VoidCallback onDismiss;
+  const TutorialOverlay({required this.onDismiss, Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black54,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text("Welcome!", style: TextStyle(color: Colors.white, fontSize: 28)),
+            Text("Use Up and Down buttons to fly.", style: TextStyle(color: Colors.white)),
+            Text("Avoid pipes and collect coins!", style: TextStyle(color: Colors.white)),
+            SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: onDismiss,
+              child: Text("Got it!"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
